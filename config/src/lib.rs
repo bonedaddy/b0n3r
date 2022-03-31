@@ -1,8 +1,8 @@
 use std::fs::File;
 
-use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
-use i2p::sam::{SamConnection};
+use i2p::sam::SamConnection;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Configuration {
@@ -11,7 +11,6 @@ pub struct Configuration {
     pub sam: SAM,
     pub server: Server,
 }
-
 
 /// configuration for a Proxy, which receives
 /// connections over tcp, forwarding them to an i2p eepsite
@@ -25,7 +24,7 @@ pub struct Proxy {
 /// an i2p eepsite, and receives connections over i2p
 /// forwarding them to a tcp service
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
-pub struct Server{
+pub struct Server {
     pub listen_address: String,
     pub forward_address: String,
     pub private_key: String,
@@ -41,15 +40,16 @@ pub struct Destination {
     pub name: String,
 }
 
-
 /// configuration for the SAM bridge
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SAM {
     pub endpoint: String,
 }
 
 impl Configuration {
-    pub fn new() -> Self { Default::default() }
+    pub fn new() -> Self {
+        Default::default()
+    }
     pub fn save(&self, path: &str) -> Result<()> {
         let config_data = serde_yaml::to_string(self)?;
         std::fs::write(path, config_data)?;
@@ -58,7 +58,7 @@ impl Configuration {
     pub fn new_sam_client(&self) -> Result<SamConnection> {
         match SamConnection::connect(self.sam.endpoint.clone()) {
             Ok(sam_conn) => Ok(sam_conn),
-            Err(err) => return Err(anyhow!("failed to connect to sam bridge {:#?}", err))
+            Err(err) => return Err(anyhow!("failed to connect to sam bridge {:#?}", err)),
         }
     }
     pub fn load(path: &str) -> Result<Self> {
@@ -67,8 +67,18 @@ impl Configuration {
     }
     pub fn destination_by_name(&self, name: &str) -> Result<Destination> {
         for destination in self.destinations.iter() {
-            if destination.name.eq(name) { return Ok(destination.clone()) }
+            if destination.name.eq(name) {
+                return Ok(destination.clone());
+            }
         }
         Err(anyhow!("failed to find destination with name {}", name))
+    }
+}
+
+impl Default for SAM {
+    fn default() -> Self {
+        Self {
+            endpoint: "127.0.0.1:7656".to_string(),
+        }
     }
 }
