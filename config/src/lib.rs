@@ -1,9 +1,9 @@
+pub mod tunnels;
 use std::fs::File;
-
 use anyhow::{anyhow, Result};
 use i2p::sam::SamConnection;
 use serde::{Deserialize, Serialize};
-
+use tunnels::Tunnel;
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Configuration {
     pub destinations: Vec<Destination>,
@@ -29,6 +29,8 @@ pub struct Server {
     pub forward_address: String,
     pub private_key: String,
     pub public_key: String,
+    /// various tunnels that the server service can use
+    pub tunnels: Vec<Tunnel>,
 }
 
 /// keeps track of a destination leaseset which have been generated
@@ -45,6 +47,8 @@ pub struct Destination {
 pub struct SAM {
     pub endpoint: String,
 }
+
+
 
 impl Configuration {
     pub fn new() -> Self {
@@ -72,6 +76,15 @@ impl Configuration {
             }
         }
         Err(anyhow!("failed to find destination with name {}", name))
+    }
+}
+
+impl Server {
+    pub fn tunnel_by_name(&self, name: &str) -> Result<Tunnel> {
+        for tunnel in self.tunnels.iter() {
+            if tunnel.name.eq(name) { return Ok(tunnel.clone()) }
+        }
+        Err(anyhow!("failed to find tunnel with name {}", name))
     }
 }
 

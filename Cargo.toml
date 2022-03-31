@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "config",
-    "cli"
+    "cli",
+    "server"
 ]
 [profile.release]
 lto = "fat"

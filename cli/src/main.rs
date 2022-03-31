@@ -10,6 +10,8 @@ use std::{thread, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 mod utils;
+mod server;
+mod client;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,6 +23,17 @@ async fn main() -> Result<()> {
     .long_help("when generating destinations, or using destinations this is the name of said destination")
     .takes_value(true)
     .required(true);
+    let tunnel_name_flag = Arg::with_name("tunnel-name")
+    .long("tunnel-name")
+    .help("the name of the tunnel to use within a server, etc..")
+    .takes_value(true)
+    .required(true);
+    let destination_flag = Arg::with_name("destination")
+    .long("destination")
+    .help("the destination (i2p address) to connection to, usually by a client process")
+    .takes_value(true)
+    .required(true);
+
 
     let matches = App::new("boner-cli")
         .about("another innapropriately named but maybe useful piece of software written by me")
@@ -44,6 +57,21 @@ async fn main() -> Result<()> {
                     .alias("gen-dest")
                     .about("generate a destination public/private keypair within the local router")
                     .arg(destination_name_flag.clone())]),
+            SubCommand::with_name("server")
+            .about("server management commands")
+            .subcommands(vec![
+                SubCommand::with_name("echo")
+                .about("starts the basic echo server")
+                .arg(destination_name_flag.clone())
+                .arg(tunnel_name_flag.clone())
+            ]),
+            SubCommand::with_name("client")
+            .about("client management commands")
+            .subcommands(vec![
+                SubCommand::with_name("echo")
+                .about("starts the basic echo client test")
+                .arg(destination_flag.clone())
+            ])
         ])
         .get_matches();
 
@@ -68,6 +96,18 @@ async fn process_matches(matches: &ArgMatches<'_>, config_file_path: &str) -> Re
             }
             _ => return Err(anyhow!(invalid_subcommand("utils"))),
         },
+        ("server", Some(server)) => match server.subcommand() {
+            ("echo", Some(echo_server)) => {
+                server::start_echo_server(echo_server, &config_file_path).await
+            }
+            _ => return Err(anyhow!(invalid_subcommand("server")))
+        }
+        ("client", Some(client)) => match client.subcommand() {
+            ("echo", Some(echo_client)) => {
+                client::echo_client_test(echo_client, config_file_path)
+            }
+            _ => return Err(anyhow!(invalid_subcommand("client")))
+        }
         _ => {
             println!("{}", matches.usage());
             println!("    run --help for more information");
