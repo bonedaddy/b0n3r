@@ -1,0 +1,13 @@
+[package]
+name = "config"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "3e088be97f13fe4f5f4d036a3d430d02de233fd8"}
+serde = {version = "1", features = ["derive"]}
+serde_json = "1.0"
+serde_yaml = "0.8"
+anyhow = "1"
