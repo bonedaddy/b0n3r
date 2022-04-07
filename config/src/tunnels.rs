@@ -1,30 +1,38 @@
-use i2p::sam_options::SAMOptions;
+use i2p::sam_options::{SAMOptions, I2CPOptions, I2CPRouterOptions, I2CPTunnelInboundOptions, I2CPTunnelOutboundOptions};
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Tunnel {
     pub in_length: u8,
     pub in_quantity: u8,
+    pub in_backup_quantity: u8,
     pub out_length: u8,
     pub out_quantity: u8,
+    pub out_backup_quantity: u8,
     pub name: String,
 }
 
 impl Tunnel {
     pub fn options(&self) -> SAMOptions {
         let mut sam_options = SAMOptions::default();
-        if let Some(i2cp_options) = sam_options.i2cp_options.as_mut() {
-            if let Some(router_options) = i2cp_options.router_options.as_mut() {
-                if let Some(inbound_options) = router_options.inbound.as_mut() {
-                    inbound_options.length = Some(self.in_length);
-                    inbound_options.quantity = Some(self.in_quantity);
-                }
-                if let Some(outbound_options) = router_options.outbound.as_mut() {
-                    outbound_options.length = Some(self.out_length);
-                    outbound_options.quantity = Some(self.out_quantity);
-                }
-            }
-        }
+        sam_options.i2cp_options = Some(I2CPOptions {
+            router_options: Some(I2CPRouterOptions {
+                inbound: Some(I2CPTunnelInboundOptions {
+                    length: Some(self.in_length),
+                    quantity: Some(self.in_quantity),
+                    backup_quantity: Some(self.in_backup_quantity),
+                    ..Default::default()
+                }),
+                outbound: Some(I2CPTunnelOutboundOptions {
+                    length: Some(self.in_length),
+                    quantity: Some(self.in_quantity),
+                    backup_quantity: Some(self.in_backup_quantity),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         sam_options
     }
 }

@@ -25,6 +25,8 @@ impl Server {
     ) -> Result<()> {
         let tunnel = self.cfg.server.tunnel_by_name(tunnel_name)?;
         let destination = self.cfg.destination_by_name(destination_name)?;
+        info!("tunnel {:#?}", tunnel);
+        println!("options {:#?}", tunnel.options().options());
         // create a sam session
         let sam_session = match Session::create(
             self.cfg.sam.endpoint.clone(), 

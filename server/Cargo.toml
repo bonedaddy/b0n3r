@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "6b3c1e17d1c5b48d415bf9e39cd9a27869eef642"}
+i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "877048ae026edbf8ff59a0c444c73f4d98b3d84c"}
 env_logger = "0.5"
 log = "0.4.6"
 anyhow = "1"
@@ -14,3 +14,10 @@ tokio = {version = "1.17.0", features = ["full", "rt-multi-thread"]}
 clap = "2.33.3"
 config = {path = "../config"}
 rand = "0.8.5"
+axum = {version = "0.5.1", features = ["headers", "http2", "ws"]}
+hyper = { version = "0.14", features = ["full"] }
+tower = { version = "0.4", features = ["make"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+vdf = {path = "../vdf"}
+rug = "1.15"

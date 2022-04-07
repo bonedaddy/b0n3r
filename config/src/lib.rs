@@ -49,7 +49,6 @@ pub struct SAM {
 }
 
 
-
 impl Configuration {
     pub fn new() -> Self {
         Default::default()
