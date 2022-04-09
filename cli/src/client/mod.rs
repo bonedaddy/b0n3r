@@ -4,25 +4,30 @@ use clap;
 use i2p::net::I2pStream;
 use std::io::{Write, Read};
 
-pub fn echo_client_test(matches: &clap::ArgMatches, config_file_path: &str) -> Result<()> {
+pub async fn echo_client_test(matches: &clap::ArgMatches<'_>, config_file_path: &str) -> Result<()> {
     let cfg = Configuration::load(config_file_path)?;
     let mut i2p_stream = match I2pStream::connect(matches.value_of("destination").unwrap()) {
         Ok(i2p_stream) => i2p_stream,
         Err(err) => return Err(anyhow!("failed to connect to destination {:#?}", err)),
     };
-    let n = i2p_stream.write(String::from("hello_world").as_bytes())?;
-    println!("client wrote {} bytes", n);
-    loop {
-        let n = i2p_stream.write(String::from("hello_world").as_bytes())?;
-        println!("client wrote {} bytes", n);
-        let mut buf = [0_u8; 1024];
-        let n = i2p_stream.read(&mut buf)?;
-        if n == 0 {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            continue;
-        }
-        unsafe{println!("client read {} bytes. msg {}", n, String::from_utf8_unchecked(buf[0..n].to_vec()))}
-    }
+    let mut i2p_conn = tokio::net::TcpStream::from_std(i2p_stream.inner.sam.conn)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    println!("listening on {}", listener.local_addr().unwrap());
+        match listener.accept().await {
+            Ok((mut conn, addr)) => {
+                match tokio::io::copy_bidirectional(&mut i2p_conn,&mut conn).await {
+                    Ok((na, nb)) => {
 
+                    }
+                    Err(err) => {
+                        println!("failed to copy {:#?}", err);
+                        return Ok(()); 
+                    }
+                }
+            },
+            Err(err) => {
+                println!("failed to accept connection {:#?}", err);
+            }
+        }
     Ok(())
 }

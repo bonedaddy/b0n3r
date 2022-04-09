@@ -132,7 +132,7 @@ async fn process_matches(matches: &ArgMatches<'_>, config_file_path: &str) -> Re
         }
         ("client", Some(client)) => match client.subcommand() {
             ("echo", Some(echo_client)) => {
-                client::echo_client_test(echo_client, config_file_path)
+                client::echo_client_test(echo_client, config_file_path).await
             }
             _ => return Err(anyhow!(invalid_subcommand("client")))
         }
