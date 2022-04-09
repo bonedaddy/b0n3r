@@ -73,7 +73,7 @@ impl Server {
                     let incoming = incoming;
                     let forward_ip = forward_ip_address.clone();
                     tokio::task::spawn(async move {
-                        let mut incoming_conn = incoming.0;
+                        let incoming_conn = incoming.0;
                         let incoming_addr = incoming.1;
                         // configure the incoming connection
                         match configure_incoming_stream(&incoming_conn, non_blocking, read_timeout, write_timeout) {
@@ -84,6 +84,14 @@ impl Server {
                                 return;
                             }
                         }
+
+                        let mut incoming_conn = match tokio::net::TcpStream::from_std(incoming_conn.inner.sam.conn) {
+                            Ok(incoming_conn) => incoming_conn,
+                            Err(err) => {
+                                error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
+                                return;
+                            }
+                        };
                         
                         info!("accepted connection from {}", incoming_addr);
 
@@ -92,16 +100,14 @@ impl Server {
                             Ok(dest_conn) => dest_conn,
                             Err(err) => {
                                 error!("failed to conenct to traget ip {:#?}", err);
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
+                                let _ = incoming_conn.shutdown().await;
                                 return;
                             }
                         };
-
-
+                        
                         loop {
                             let mut read_buf =[0_u8; 1024];
-                            let mut write_buf = [0_u8; 1024];
-                            match incoming_conn.read(&mut read_buf) {
+                            match incoming_conn.read(&mut read_buf).await {
                                 Ok(n) => if n > 0_usize {
                                     info!("read {} bytes from {}", n, incoming_addr);
                                     match outgoing_conn.write(&read_buf[..n]).await {
@@ -109,46 +115,47 @@ impl Server {
                                             info!("wrote {} bytes to outgoing connection", n);
                                         } else {
                                             error!("wrote 0 bytes to outgoing connection");
-                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            let _ = incoming_conn.shutdown().await;
                                             return;
                                         }
                                         Err(err) => {
                                             error!("failed to write data to outgoing connection {:#?}", err);
-                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            let _ = incoming_conn.shutdown().await;
                                             return;
                                         }
                                     }
+                                    let mut write_buf = [0_u8; 1024];
                                     match outgoing_conn.read(&mut write_buf).await {
                                         Ok(n) => if n > 0_usize {
                                             info!("read {} bytes from outgoing connection", n);
-                                            match incoming_conn.write(&write_buf[..n]) {
+                                            match incoming_conn.write(&write_buf[..n]).await {
                                                 Ok(n) => if n > 0_usize {
                                                     info!("wrote {} bytes to incoming connection", n);
                                                 } else {
                                                     error!("wrote 0 bytes to incoming connection");
-                                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                                    let _ = incoming_conn.shutdown().await;
                                                     return;
                                                 }
                                                 Err(err) => {
                                                     error!("failed to write data to incoming connection {:#?}", err);
-                                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                                    let _ = incoming_conn.shutdown().await;
                                                     return;
                                                 }
                                             }
                                         } else if n == 0_usize {
                                             warn!("received eof");
-                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            let _ = incoming_conn.shutdown().await;
                                             return;
                                         }
                                         Err(err) => {
                                             error!("failed to read data from outgoing conection {:#?}", err);
-                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            let _ = incoming_conn.shutdown().await;
                                             return;
                                         }
                                     }
                                 } else if n == 0_usize {
                                     warn!("received eof");
-                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    let _ = incoming_conn.shutdown().await;
                                     return;
                                 }
                                 Err(err) => {
@@ -162,7 +169,7 @@ impl Server {
                                         continue;
                                     }
                                     error!("failed to read from connection {:#?}", err);
-                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    let _ = incoming_conn.shutdown().await;
                                     return;
                                 }
                             }

@@ -17,10 +17,18 @@ pub async fn start_tcp_echo_server(matches: &clap::ArgMatches<'_>, config_file_p
     loop {
         match listener.accept().await {
             Ok((conn, addr)) => {
-                println!("accepted connection from {}", addr);
-                let (mut reader, mut writer) = conn.into_split();
-                let copied = tokio::io::copy(&mut reader, &mut writer).await?;
-                println!("copied {} bytes", copied);
+                tokio::task::spawn(async move {
+                    println!("accepted connection from {}", addr);
+                    let (mut reader, mut writer) = conn.into_split();
+                    let copied = match tokio::io::copy(&mut reader, &mut writer).await {
+                        Ok(n) => n,
+                        Err(err) => {
+                            println!("failed to copy {:#?}", err);
+                            return;
+                        }
+                    };
+                    println!("copied {} bytes", copied);
+                });
             },
             Err(err) => {
                 println!("failed to accept connection {:#?}", err);
