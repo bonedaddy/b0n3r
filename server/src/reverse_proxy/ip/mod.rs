@@ -46,6 +46,7 @@ impl Server {
         forward_ip_address: String,
         read_timeout: Option<Duration>,
         write_timeout: Option<Duration>,
+        non_blocking: bool,
     ) -> Result<()> {
         let tunnel = self.cfg.server.tunnel_by_name(&tunnel_name)?;
         let destination = self.cfg.destination_by_name(&destination_name)?;
@@ -75,7 +76,7 @@ impl Server {
                         let mut incoming_conn = incoming.0;
                         let incoming_addr = incoming.1;
                         // configure the incoming connection
-                        match configure_incoming_stream(&incoming_conn, false, read_timeout, write_timeout) {
+                        match configure_incoming_stream(&incoming_conn, non_blocking, read_timeout, write_timeout) {
                             Ok(_) => (),
                             Err(err) => {
                                 error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
@@ -96,13 +97,10 @@ impl Server {
                             }
                         };
 
-                        let mut read_buf =[0_u8; 1024];
-                        let mut write_buf = [0_u8; 1024];
-                        loop {
-                            // clear previous values
-                            read_buf = [0_u8; 1024];
-                            write_buf = [0_u8; 1024];
 
+                        loop {
+                            let mut read_buf =[0_u8; 1024];
+                            let mut write_buf = [0_u8; 1024];
                             match incoming_conn.read(&mut read_buf) {
                                 Ok(n) => if n > 0_usize {
                                     info!("read {} bytes from {}", n, incoming_addr);
@@ -154,6 +152,15 @@ impl Server {
                                     return;
                                 }
                                 Err(err) => {
+                                    // if the incoming connection is set to non blocking and this errorkind
+                                    // is returned, it means the io operation needs to be retried, so sleep
+                                    // for a few milliseconds to give the cpu a break, and introduce a yield point
+                                    // where tokio can schedule other tasks
+                                    if err.kind().eq(&std::io::ErrorKind::WouldBlock) && non_blocking {
+                                        //  sleep for 50ms before looping again
+                                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                        continue;
+                                    }
                                     error!("failed to read from connection {:#?}", err);
                                     let _ = incoming_conn.shutdown(Shutdown::Both);
                                     return;

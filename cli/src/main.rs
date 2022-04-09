@@ -43,6 +43,11 @@ async fn main() -> Result<()> {
     .help("the ip address to listening for connections on")
     .takes_value(true)
     .required(true);
+    let non_blocking_flag = Arg::with_name("nonblocking")
+    .long("nonblocking")
+    .help("enable socket nonblocking mode")
+    .takes_value(false)
+    .required(false);
     let matches = App::new("boner-cli")
         .about("another innapropriately named but maybe useful piece of software written by me")
         .long_about("ideal application outcome is a self configuring tcp proxy that uses i2p")
@@ -80,6 +85,7 @@ async fn main() -> Result<()> {
                 .arg(destination_name_flag.clone())
                 .arg(tunnel_name_flag.clone())
                 .arg(forward_ip_flag.clone())
+                .arg(non_blocking_flag.clone())
             ]),
             SubCommand::with_name("client")
             .about("client management commands")

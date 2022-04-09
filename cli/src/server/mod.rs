@@ -38,6 +38,7 @@ pub async fn start_reverse_proxy(matches: &clap::ArgMatches<'_>, config_file_pat
         matches.value_of("forward-ip").unwrap().to_string(),
         None,
         None,
+        matches.is_present("nonblocking")
     ).await?;
     Ok(())
 }
