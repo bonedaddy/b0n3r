@@ -105,6 +105,7 @@ impl Server {
                             }
                         };
 
+                        // drain the first byte 
                         {
                             let mut buf = [0_u8; 1];
                             match incoming_conn.read_exact(&mut buf).await {
@@ -116,6 +117,46 @@ impl Server {
                                 }
                             }
                         }
+                        // until vdfs are implemented, generate a random value
+                        // that must be hashed by the incoming connection
+                        // this isn't fail-safe, and wont prevent ddos
+                        // but it serves as a temporary method of stopping curious individuals
+                        let rand_seed = rand_value();
+                        let want_rand_seed_hash = {
+                            use ring::digest::{Context, SHA256};
+                            let mut context = Context::new(&SHA256);
+                            context.update(rand_seed.as_bytes());
+                            let digest = context.finish();
+                            digest.as_ref().to_vec()
+                        };
+
+                        // write the random seed
+                        match incoming_conn.write(rand_seed.as_bytes()).await {
+                            Ok(n) => info!("wrote {} bytes of random_seed", n),
+                            Err(err) => {
+                                error!("failed to write random_seed {:#?}", err);
+                                let _ = incoming_conn.shutdown().await;
+                                return;
+                            }
+                        };
+                        // read the hashed random seed
+                        let mut rand_seed_hash = [0_u8; 32];
+                        match incoming_conn.read(&mut rand_seed_hash).await {
+                            Ok(n) => info!("read {} bytes of hashed_random_seed", n),
+                            Err(err) => {
+                                error!("failed to write random_seed {:#?}", err);
+                                let _ = incoming_conn.shutdown().await;
+                                return;
+                            }
+                        };
+
+                        // ensure it matches the expected value
+                        if rand_seed_hash.to_vec().ne(&want_rand_seed_hash) {
+                            error!("mismatched hashes. want {:?}, got {:?}", want_rand_seed_hash, rand_seed_hash);
+                            let _ = incoming_conn.shutdown().await;
+                            return;
+                        }
+
                         loop {
                             let mut read_buf =[0_u8; 1024];
                             match incoming_conn.read(&mut read_buf).await {

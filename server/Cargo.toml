@@ -21,3 +21,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 vdf = {path = "../vdf"}
 rug = "1.15"
+data-encoding = "2.3.2"
+ring = "0.16.20"

@@ -10,6 +10,17 @@ pub async fn echo_client_test(matches: &clap::ArgMatches<'_>, config_file_path: 
         Ok(i2p_stream) => i2p_stream,
         Err(err) => return Err(anyhow!("failed to connect to destination {:#?}", err)),
     };
+
+    {
+        let mut rand_seed_buf = [0_u8; 64];
+        i2p_stream.read(&mut rand_seed_buf).unwrap();
+        use ring::digest::{Context, SHA256};
+        let mut context = Context::new(&SHA256);
+        context.update(&rand_seed_buf);
+        let digest = context.finish();
+        i2p_stream.write(digest.as_ref()).unwrap();
+    }
+
     let mut i2p_conn = tokio::net::TcpStream::from_std(i2p_stream.inner.sam.conn)?;
     let (mut i2p_reader, mut i2p_writer) = i2p_conn.into_split();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
