@@ -589,7 +589,7 @@ dependencies = [
 [[package]]
 name = "i2p"
 version = "0.1.0"
-source = "git+https://github.com/bonedaddy/i2p-rs.git?rev=877048ae026edbf8ff59a0c444c73f4d98b3d84c#877048ae026edbf8ff59a0c444c73f4d98b3d84c"
+source = "git+https://github.com/bonedaddy/i2p-rs.git?rev=3c0892f3c94275afc9833676493c26d0878ad708#3c0892f3c94275afc9833676493c26d0878ad708"
 dependencies = [
  "data-encoding",
  "failure",

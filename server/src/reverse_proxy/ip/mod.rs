@@ -17,6 +17,7 @@ use axum::{
 };
 use hyper::{client::HttpConnector, Body, server::conn::AddrIncoming};
 use rand::Rng;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::{convert::TryFrom, net::SocketAddr};
 
 type Client = hyper::client::Client<HttpConnector, Body>;
@@ -37,13 +38,12 @@ impl Server {
     }
     /// tunnel_name specifies the name of the server tunnel and
     /// it's corresponding lease set to use
-   async fn start(
+   pub async fn start(
         self: &Arc<Self>, 
         tunnel_name: String,
         destination_name: String,
         // ip address to forward requests too
         forward_ip_address: String,
-        listen_address: String,
         read_timeout: Option<Duration>,
         write_timeout: Option<Duration>,
     ) -> Result<()> {
@@ -63,7 +63,9 @@ impl Server {
             Ok(i2p_listener) => i2p_listener,
             Err(err) => return Err(anyhow!("failed to bind i2p listener to sam session {:#?}", err))
         };
-
+        let local_addr = i2p_listener.local_addr().unwrap();
+        
+        info!("listening for connections on {}",  I2pAddr::from_b64(&local_addr.dest().string()).unwrap());
         loop {
             match i2p_listener.accept() {
                 Ok(incoming) => {
@@ -73,7 +75,7 @@ impl Server {
                         let mut incoming_conn = incoming.0;
                         let incoming_addr = incoming.1;
                         // configure the incoming connection
-                        match configure_incoming_stream(&incoming_conn, read_timeout, write_timeout) {
+                        match configure_incoming_stream(&incoming_conn, false, read_timeout, write_timeout) {
                             Ok(_) => (),
                             Err(err) => {
                                 error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
@@ -81,59 +83,11 @@ impl Server {
                                 return;
                             }
                         }
+                        
                         info!("accepted connection from {}", incoming_addr);
-                        // return the random value they need to hash
-                        // and use as the seed in a vdf
-                        let rand_seed = rand_number();
-                        match incoming_conn.write(&rand_seed.to_le_bytes()[..]) {
-                            Ok(n) => if n != 8 {
-                                error!("failed to fully write random_seed. wrote {} bytes", n);
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
-                                return;
-                            }
-                            Err(err) => {
-                                error!("failed to write random_seed {:#?}", err);
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
-                                return;
-                            }
-                        };
-                        {
-                            let mut authentication_buffer = [0_u8; 1024];
-                            match incoming_conn.read(&mut authentication_buffer) {
-                                Ok(_) => (),
-                                Err(err) => {
-                                    error!("failed to read authentication buffer. {:#?}", err);
-                                    let _ = incoming_conn.shutdown(Shutdown::Both);
-                                    return;
-                                }
-                            }
-                            // scan through until we find the newline
-                            let mut end_idx = 0;
-                            authentication_buffer.iter().enumerate().for_each(|(idx, val)| {
-                                if *val == '\n' as u8 {
-                                    end_idx = idx;
-                                }
-                            });
-                            if end_idx == 0 {
-                                error!("failed to find end index");
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
-                                return;
-                            }
-                            let mut auth_buff = Vec::with_capacity(end_idx);
-                            let mut handle = authentication_buffer.take(end_idx as u64);
-                            match handle.read(&mut auth_buff) {
-                                Ok(_) => (),
-                                Err(err) => {
-                                    error!("failed to fill auth_buff {:#?}", err);
-                                    let _ = incoming_conn.shutdown(Shutdown::Both);
-                                    return;
-                                }
-                            }; 
-                            let vdf_result = rug::Integer::new().set_bit(index, val)
-                            warn!("todo(bonedaddy): validate the returned authentication buffer");
 
-                        }
-                        let dest_conn = match tokio::net::TcpStream::connect(&forward_ip).await {
+                        info!("connecting to {}", forward_ip);
+                        let mut outgoing_conn = match tokio::net::TcpStream::connect(&forward_ip).await {
                             Ok(dest_conn) => dest_conn,
                             Err(err) => {
                                 error!("failed to conenct to traget ip {:#?}", err);
@@ -141,6 +95,129 @@ impl Server {
                                 return;
                             }
                         };
+
+                        let mut read_buf =[0_u8; 1024];
+                        let mut write_buf = [0_u8; 1024];
+                        loop {
+                            // clear previous values
+                            read_buf = [0_u8; 1024];
+                            write_buf = [0_u8; 1024];
+
+                            match incoming_conn.read(&mut read_buf) {
+                                Ok(n) => if n > 0_usize {
+                                    info!("read {} bytes from {}", n, incoming_addr);
+                                    match outgoing_conn.write(&read_buf[..n]).await {
+                                        Ok(n) => if n > 0_usize {
+                                            info!("wrote {} bytes to outgoing connection", n);
+                                        } else {
+                                            error!("wrote 0 bytes to outgoing connection");
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                        Err(err) => {
+                                            error!("failed to write data to outgoing connection {:#?}", err);
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                    }
+                                    match outgoing_conn.read(&mut write_buf).await {
+                                        Ok(n) => if n > 0_usize {
+                                            info!("read {} bytes from outgoing connection", n);
+                                            match incoming_conn.write(&write_buf[..n]) {
+                                                Ok(n) => if n > 0_usize {
+                                                    info!("wrote {} bytes to incoming connection", n);
+                                                } else {
+                                                    error!("wrote 0 bytes to incoming connection");
+                                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                                    return;
+                                                }
+                                                Err(err) => {
+                                                    error!("failed to write data to incoming connection {:#?}", err);
+                                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                                    return;
+                                                }
+                                            }
+                                        } else if n == 0_usize {
+                                            warn!("received eof");
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                        Err(err) => {
+                                            error!("failed to read data from outgoing conection {:#?}", err);
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                    }
+                                } else if n == 0_usize {
+                                    warn!("received eof");
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    return;
+                                }
+                                Err(err) => {
+                                    error!("failed to read from connection {:#?}", err);
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    return;
+                                }
+                            }
+                        }
+
+
+                        // return the random value they need to hash
+                        // and use as the seed in a vdf
+                        //let rand_seed = rand_value();
+                        //match incoming_conn.write(rand_seed.as_bytes()) {
+                        //    Ok(n) => if n != 64 {
+                        //        error!("failed to fully write random_seed. wrote {} bytes", n);
+                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
+                        //        return;
+                        //    }
+                        //    Err(err) => {
+                        //        error!("failed to write random_seed {:#?}", err);
+                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
+                        //        return;
+                        //    }
+                        //};
+                        //let incoming_tcp_stream = match incoming_conn.inner.try_clone_session() {
+                        //    Ok(tcp_stream) => tcp_stream,
+                        //    Err(err) => {
+                        //        error!("failed to parse session into tcp stream {:#?}", err);
+                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
+                        //        return;
+                        //    }
+                        //};
+                        //let incoming_tcp_stream = match tokio::net::TcpStream::from_std(incoming_tcp_stream) {
+                        //    Ok(tcp_stream) => tcp_stream,
+                        //    Err(err) => {
+                        //        error!("failed to parse session into tcp stream {:#?}", err);
+                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
+                        //        return;  
+                        //    }
+                        //};
+//
+//
+                        //let (mut incoming_reader, mut incoming_writer) = tokio::io::split(incoming_tcp_stream);
+                        //info!("connecting to {}", forward_ip);
+                        //let outgoing_conn = match tokio::net::TcpStream::connect(&forward_ip).await {
+                        //    Ok(dest_conn) => dest_conn,
+                        //    Err(err) => {
+                        //        error!("failed to conenct to traget ip {:#?}", err);
+                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
+                        //        return;
+                        //    }
+                        //};
+                        //info!("connected to {}", forward_ip);
+                        //let (mut outgoing_reader, mut outgoing_writer) = tokio::io::split(outgoing_conn);
+//
+                        //tokio::task::spawn(async move {
+                        //    if let Err(err) = tokio::io::copy(&mut incoming_reader, &mut outgoing_writer).await {
+                        //        error!("incoming_conn(rdr) -> outgoing_conn(wrtr) encountered error {:#?}", err);
+                        //    }
+                        //});
+                        //tokio::task::spawn(async move {
+                        //    if let Err(err) = tokio::io::copy(&mut outgoing_reader, &mut incoming_writer).await {
+                        //        error!("outgoing_conn(rdr) -> incoming_conn(wrtr) encountered error {:#?}", err);
+                        //    }
+                        //});
                     });
                 }
                 Err(err) => {
@@ -153,24 +230,11 @@ impl Server {
     
 }
 
-fn rand_divisor() -> f64 {
-    rand::thread_rng().gen_range(1_f64..4_f64)
-}
-
-fn rand_number() -> f64 {
-    rand::thread_rng().gen_range(
-        f64::MAX / (rand_divisor() - 1_f64)
-        ..
-        f64::MAX,
-    )
-}  
-
 fn rand_value() -> String {
     use rand::distributions::DistString;
     use rand::distributions::Alphanumeric;
     Alphanumeric.sample_string(&mut rand::thread_rng(), 64)
 }
-
 
 fn nickname() -> String {
     use rand::distributions::DistString;
@@ -180,26 +244,32 @@ fn nickname() -> String {
 
 fn configure_incoming_stream(
     incoming_conn: &I2pStream,
+    nonblocking: bool,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
 ) -> Result<()> {
-    match incoming_conn.set_nonblocking(true) {
+    match incoming_conn.set_nonblocking(nonblocking) {
         Ok(_) => (),
         Err(err) => {
             return Err(anyhow!("failed to set incoming connection to non blocking mode {:#?}", err));
         }
     }
-    match incoming_conn.set_read_timeout(read_timeout) {
-        Ok(_) => (),
-        Err(err) => {
-            return Err(anyhow!("failed to set incoming connection read timeout {:#?}", err));
+    if read_timeout.is_some() {
+        match incoming_conn.set_read_timeout(read_timeout) {
+            Ok(_) => (),
+            Err(err) => {
+                return Err(anyhow!("failed to set incoming connection read timeout {:#?}", err));
+            }
         }
     }
-    match incoming_conn.set_write_timeout(write_timeout) {
-        Ok(_) => (),
-        Err(err) => {
-            return Err(anyhow!("failed to set incoming connection write timeout {:#?}", err));
+    if write_timeout.is_some() {
+        match incoming_conn.set_write_timeout(write_timeout) {
+            Ok(_) => (),
+            Err(err) => {
+                return Err(anyhow!("failed to set incoming connection write timeout {:#?}", err));
+            }
         }
     }
+
     Ok(())
 }

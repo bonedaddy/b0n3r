@@ -33,8 +33,16 @@ async fn main() -> Result<()> {
     .help("the destination (i2p address) to connection to, usually by a client process")
     .takes_value(true)
     .required(true);
-
-
+    let forward_ip_flag = Arg::with_name("forward-ip")
+    .long("forward-ip")
+    .help("the ip address to forward connections to")
+    .takes_value(true)
+    .required(true);
+    let listen_ip_flag = Arg::with_name("listen-ip")
+    .long("listen-ip")
+    .help("the ip address to listening for connections on")
+    .takes_value(true)
+    .required(true);
     let matches = App::new("boner-cli")
         .about("another innapropriately named but maybe useful piece of software written by me")
         .long_about("ideal application outcome is a self configuring tcp proxy that uses i2p")
@@ -63,7 +71,15 @@ async fn main() -> Result<()> {
                 SubCommand::with_name("echo")
                 .about("starts the basic echo server")
                 .arg(destination_name_flag.clone())
+                .arg(tunnel_name_flag.clone()),
+                SubCommand::with_name("tcp-echo")
+                .about("starts the basic tcp echo server")
+                .arg(listen_ip_flag.clone()),
+                SubCommand::with_name("reverse-proxy")
+                .about("starts the reverse proxy server")
+                .arg(destination_name_flag.clone())
                 .arg(tunnel_name_flag.clone())
+                .arg(forward_ip_flag.clone())
             ]),
             SubCommand::with_name("client")
             .about("client management commands")
@@ -99,6 +115,12 @@ async fn process_matches(matches: &ArgMatches<'_>, config_file_path: &str) -> Re
         ("server", Some(server)) => match server.subcommand() {
             ("echo", Some(echo_server)) => {
                 server::start_echo_server(echo_server, &config_file_path).await
+            }
+            ("tcp-echo", Some(tcp_echo)) => {
+                server::start_tcp_echo_server(tcp_echo, &config_file_path).await
+            }
+            ("reverse-proxy", Some(reverse_proxy)) => {
+                server::start_reverse_proxy(reverse_proxy, config_file_path).await
             }
             _ => return Err(anyhow!(invalid_subcommand("server")))
         }
