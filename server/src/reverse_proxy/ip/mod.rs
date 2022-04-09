@@ -104,7 +104,18 @@ impl Server {
                                 return;
                             }
                         };
-                        
+
+                        {
+                            let mut buf = [0_u8; 1];
+                            match incoming_conn.read_exact(&mut buf).await {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    error!("failed to read initial first bytes {:#?}", err);
+                                    let _ = incoming_conn.shutdown().await;
+                                    return;
+                                }
+                            }
+                        }
                         loop {
                             let mut read_buf =[0_u8; 1024];
                             match incoming_conn.read(&mut read_buf).await {
