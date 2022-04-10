@@ -23,3 +23,4 @@ vdf = {path = "../vdf"}
 rug = "1.15"
 data-encoding = "2.3.2"
 ring = "0.16.20"
+futures = { version = "0.3.0", features = ["thread-pool"]}

@@ -10,6 +10,7 @@ pub struct Tunnel {
     pub out_quantity: u8,
     pub out_backup_quantity: u8,
     pub name: String,
+    pub random_key: Option<String>,
 }
 
 impl Tunnel {
@@ -21,14 +22,18 @@ impl Tunnel {
                     length: Some(self.in_length),
                     quantity: Some(self.in_quantity),
                     backup_quantity: Some(self.in_backup_quantity),
+                    random_key: self.random_key.clone(),
                     ..Default::default()
                 }),
                 outbound: Some(I2CPTunnelOutboundOptions {
                     length: Some(self.in_length),
                     quantity: Some(self.in_quantity),
                     backup_quantity: Some(self.in_backup_quantity),
+                    random_key: self.random_key.clone(),
                     ..Default::default()
                 }),
+                fast_receive: Some(true),
+                should_bundle_reply_info: Some(false),
                 ..Default::default()
             }),
             ..Default::default()

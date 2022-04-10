@@ -18,8 +18,10 @@ use axum::{
 use hyper::{client::HttpConnector, Body, server::conn::AddrIncoming};
 use rand::Rng;
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::net::TcpStream;
 use std::{convert::TryFrom, net::SocketAddr};
 
+use futures::FutureExt;
 type Client = hyper::client::Client<HttpConnector, Body>;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -64,6 +66,7 @@ impl Server {
             Ok(i2p_listener) => i2p_listener,
             Err(err) => return Err(anyhow!("failed to bind i2p listener to sam session {:#?}", err))
         };
+
         let local_addr = i2p_listener.local_addr().unwrap();
         
         info!("listening for connections on {}",  I2pAddr::from_b64(&local_addr.dest().string()).unwrap());
@@ -73,46 +76,21 @@ impl Server {
                     let incoming = incoming;
                     let forward_ip = forward_ip_address.clone();
                     tokio::task::spawn(async move {
-                        let incoming_conn = incoming.0;
+                        let mut incoming_conn = incoming.0;
                         let incoming_addr = incoming.1;
-                        // configure the incoming connection
-                        match configure_incoming_stream(&incoming_conn, non_blocking, read_timeout, write_timeout) {
-                            Ok(_) => (),
-                            Err(err) => {
-                                error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
-                                return;
-                            }
-                        }
-
-                        let mut incoming_conn = match tokio::net::TcpStream::from_std(incoming_conn.inner.sam.conn) {
-                            Ok(incoming_conn) => incoming_conn,
-                            Err(err) => {
-                                error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
-                                return;
-                            }
-                        };
-                        
+   
                         info!("accepted connection from {}", incoming_addr);
 
                         info!("connecting to {}", forward_ip);
-                        let mut outgoing_conn = match tokio::net::TcpStream::connect(&forward_ip).await {
-                            Ok(dest_conn) => dest_conn,
-                            Err(err) => {
-                                error!("failed to conenct to traget ip {:#?}", err);
-                                let _ = incoming_conn.shutdown().await;
-                                return;
-                            }
-                        };
 
                         // drain the first byte 
                         {
                             let mut buf = [0_u8; 1];
-                            match incoming_conn.read_exact(&mut buf).await {
+                            match incoming_conn.read_exact(&mut buf) {
                                 Ok(_) => (),
                                 Err(err) => {
                                     error!("failed to read initial first bytes {:#?}", err);
-                                    let _ = incoming_conn.shutdown().await;
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
                                     return;
                                 }
                             }
@@ -120,170 +98,62 @@ impl Server {
                         // until vdfs are implemented, generate a random value
                         // that must be hashed by the incoming connection
                         // this isn't fail-safe, and wont prevent ddos
-                        // but it serves as a temporary method of stopping curious individuals
-                        let rand_seed = rand_value();
-                        let want_rand_seed_hash = {
-                            use ring::digest::{Context, SHA256};
-                            let mut context = Context::new(&SHA256);
-                            context.update(rand_seed.as_bytes());
-                            let digest = context.finish();
-                            digest.as_ref().to_vec()
-                        };
+                        // but it serves as a temporary method of stopping  people 
+                        // from randomly opening tunnels
+                        {
+                            let rand_seed = rand_value();
+                            let want_rand_seed_hash = {
+                                use ring::digest::{Context, SHA256};
+                                let mut context = Context::new(&SHA256);
+                                context.update(rand_seed.as_bytes());
+                                let digest = context.finish();
+                                digest.as_ref().to_vec()
+                            };
 
-                        // write the random seed
-                        match incoming_conn.write(rand_seed.as_bytes()).await {
-                            Ok(n) => info!("wrote {} bytes of random_seed", n),
-                            Err(err) => {
-                                error!("failed to write random_seed {:#?}", err);
-                                let _ = incoming_conn.shutdown().await;
-                                return;
-                            }
-                        };
-                        // read the hashed random seed
-                        let mut rand_seed_hash = [0_u8; 32];
-                        match incoming_conn.read(&mut rand_seed_hash).await {
-                            Ok(n) => info!("read {} bytes of hashed_random_seed", n),
-                            Err(err) => {
-                                error!("failed to write random_seed {:#?}", err);
-                                let _ = incoming_conn.shutdown().await;
-                                return;
-                            }
-                        };
-
-                        // ensure it matches the expected value
-                        if rand_seed_hash.to_vec().ne(&want_rand_seed_hash) {
-                            error!("mismatched hashes. want {:?}, got {:?}", want_rand_seed_hash, rand_seed_hash);
-                            let _ = incoming_conn.shutdown().await;
-                            return;
-                        }
-
-                        loop {
-                            let mut read_buf =[0_u8; 1024];
-                            match incoming_conn.read(&mut read_buf).await {
-                                Ok(n) => if n > 0_usize {
-                                    info!("read {} bytes from {}", n, incoming_addr);
-                                    match outgoing_conn.write(&read_buf[..n]).await {
-                                        Ok(n) => if n > 0_usize {
-                                            info!("wrote {} bytes to outgoing connection", n);
-                                        } else {
-                                            error!("wrote 0 bytes to outgoing connection");
-                                            let _ = incoming_conn.shutdown().await;
-                                            return;
-                                        }
-                                        Err(err) => {
-                                            error!("failed to write data to outgoing connection {:#?}", err);
-                                            let _ = incoming_conn.shutdown().await;
-                                            return;
-                                        }
-                                    }
-                                    let mut write_buf = [0_u8; 1024];
-                                    match outgoing_conn.read(&mut write_buf).await {
-                                        Ok(n) => if n > 0_usize {
-                                            info!("read {} bytes from outgoing connection", n);
-                                            match incoming_conn.write(&write_buf[..n]).await {
-                                                Ok(n) => if n > 0_usize {
-                                                    info!("wrote {} bytes to incoming connection", n);
-                                                } else {
-                                                    error!("wrote 0 bytes to incoming connection");
-                                                    let _ = incoming_conn.shutdown().await;
-                                                    return;
-                                                }
-                                                Err(err) => {
-                                                    error!("failed to write data to incoming connection {:#?}", err);
-                                                    let _ = incoming_conn.shutdown().await;
-                                                    return;
-                                                }
-                                            }
-                                        } else if n == 0_usize {
-                                            warn!("received eof");
-                                            let _ = incoming_conn.shutdown().await;
-                                            return;
-                                        }
-                                        Err(err) => {
-                                            error!("failed to read data from outgoing conection {:#?}", err);
-                                            let _ = incoming_conn.shutdown().await;
-                                            return;
-                                        }
-                                    }
-                                } else if n == 0_usize {
-                                    warn!("received eof");
-                                    let _ = incoming_conn.shutdown().await;
-                                    return;
-                                }
+                            // write the random seed
+                            match incoming_conn.write(rand_seed.as_bytes()) {
+                                Ok(n) => info!("wrote {} bytes of random_seed", n),
                                 Err(err) => {
-                                    // if the incoming connection is set to non blocking and this errorkind
-                                    // is returned, it means the io operation needs to be retried, so sleep
-                                    // for a few milliseconds to give the cpu a break, and introduce a yield point
-                                    // where tokio can schedule other tasks
-                                    if err.kind().eq(&std::io::ErrorKind::WouldBlock) && non_blocking {
-                                        //  sleep for 50ms before looping again
-                                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                        continue;
-                                    }
-                                    error!("failed to read from connection {:#?}", err);
-                                    let _ = incoming_conn.shutdown().await;
+                                    error!("failed to write random_seed {:#?}", err);
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
                                     return;
                                 }
+                            };
+                            // read the hashed random seed
+                            let mut rand_seed_hash = [0_u8; 32];
+                            match incoming_conn.read(&mut rand_seed_hash) {
+                                Ok(n) => info!("read {} bytes of hashed_random_seed", n),
+                                Err(err) => {
+                                    error!("failed to write random_seed {:#?}", err);
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    return;
+                                }
+                            };
+
+                            // ensure it matches the expected value
+                            if rand_seed_hash.to_vec().ne(&want_rand_seed_hash) {
+                                error!("mismatched hashes. want {:?}, got {:?}", want_rand_seed_hash, rand_seed_hash);
+                                let _ = incoming_conn.shutdown(Shutdown::Both);
+                                return;
                             }
                         }
+                        incoming_conn.set_nonblocking(true).unwrap();
+                        let incoming_conn = match tokio::net::TcpStream::from_std(incoming_conn.inner.sam.conn) {
+                            Ok(incoming_conn) => incoming_conn,
+                            Err(err) => {
+                                error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
+                                return;
+                            }
+                        };
 
-
-                        // return the random value they need to hash
-                        // and use as the seed in a vdf
-                        //let rand_seed = rand_value();
-                        //match incoming_conn.write(rand_seed.as_bytes()) {
-                        //    Ok(n) => if n != 64 {
-                        //        error!("failed to fully write random_seed. wrote {} bytes", n);
-                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
-                        //        return;
-                        //    }
-                        //    Err(err) => {
-                        //        error!("failed to write random_seed {:#?}", err);
-                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
-                        //        return;
-                        //    }
-                        //};
-                        //let incoming_tcp_stream = match incoming_conn.inner.try_clone_session() {
-                        //    Ok(tcp_stream) => tcp_stream,
-                        //    Err(err) => {
-                        //        error!("failed to parse session into tcp stream {:#?}", err);
-                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
-                        //        return;
-                        //    }
-                        //};
-                        //let incoming_tcp_stream = match tokio::net::TcpStream::from_std(incoming_tcp_stream) {
-                        //    Ok(tcp_stream) => tcp_stream,
-                        //    Err(err) => {
-                        //        error!("failed to parse session into tcp stream {:#?}", err);
-                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
-                        //        return;  
-                        //    }
-                        //};
-//
-//
-                        //let (mut incoming_reader, mut incoming_writer) = tokio::io::split(incoming_tcp_stream);
-                        //info!("connecting to {}", forward_ip);
-                        //let outgoing_conn = match tokio::net::TcpStream::connect(&forward_ip).await {
-                        //    Ok(dest_conn) => dest_conn,
-                        //    Err(err) => {
-                        //        error!("failed to conenct to traget ip {:#?}", err);
-                        //        let _ = incoming_conn.shutdown(Shutdown::Both);
-                        //        return;
-                        //    }
-                        //};
-                        //info!("connected to {}", forward_ip);
-                        //let (mut outgoing_reader, mut outgoing_writer) = tokio::io::split(outgoing_conn);
-//
-                        //tokio::task::spawn(async move {
-                        //    if let Err(err) = tokio::io::copy(&mut incoming_reader, &mut outgoing_writer).await {
-                        //        error!("incoming_conn(rdr) -> outgoing_conn(wrtr) encountered error {:#?}", err);
-                        //    }
-                        //});
-                        //tokio::task::spawn(async move {
-                        //    if let Err(err) = tokio::io::copy(&mut outgoing_reader, &mut incoming_writer).await {
-                        //        error!("outgoing_conn(rdr) -> incoming_conn(wrtr) encountered error {:#?}", err);
-                        //    }
-                        //});
+                        let transfer = transfer(incoming_conn, forward_ip.clone()).map(|r| {
+                            if let Err(e) = r {
+                                println!("Failed to transfer; error={}", e);
+                            }
+                        });
+                        tokio::spawn(async move {
+                            transfer.await
+                        });
                     });
                 }
                 Err(err) => {
@@ -336,6 +206,27 @@ fn configure_incoming_stream(
             }
         }
     }
+
+    Ok(())
+}
+
+async fn transfer(mut inbound: TcpStream, proxy_addr: String) -> Result<(), Box<dyn std::error::Error>> {
+    let mut outbound = TcpStream::connect(proxy_addr).await?;
+
+    let (mut ri, mut wi) = inbound.split();
+    let (mut ro, mut wo) = outbound.split();
+
+    let client_to_server = async {
+        tokio::io::copy(&mut ri, &mut wo).await?;
+        wo.shutdown().await
+    };
+
+    let server_to_client = async {
+        tokio::io::copy(&mut ro, &mut wi).await?;
+        wi.shutdown().await
+    };
+
+    tokio::try_join!(client_to_server, server_to_client)?;
 
     Ok(())
 }
