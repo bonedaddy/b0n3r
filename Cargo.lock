@@ -262,6 +262,7 @@ name = "cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "config",
  "data-encoding",
@@ -269,8 +270,10 @@ dependencies = [
  "i2p",
  "log",
  "ring",
+ "rug",
  "server",
  "tokio",
+ "vdf",
 ]
 
 [[package]]
@@ -875,7 +878,7 @@ dependencies = [
 [[package]]
 name = "i2p"
 version = "0.1.0"
-source = "git+https://github.com/bonedaddy/i2p-rs.git?rev=3c0892f3c94275afc9833676493c26d0878ad708#3c0892f3c94275afc9833676493c26d0878ad708"
+source = "git+https://github.com/bonedaddy/i2p-rs.git?rev=31518759a89b61ea465905845b3d640d6eaf4d87#31518759a89b61ea465905845b3d640d6eaf4d87"
 dependencies = [
  "data-encoding",
  "failure",
@@ -1657,6 +1660,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bytes",
  "clap",
  "config",
  "data-encoding",

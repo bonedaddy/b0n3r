@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use bytes::BytesMut;
 use config::Configuration;
 use clap;
 use i2p::net::I2pStream;
@@ -12,13 +13,27 @@ pub async fn echo_client_test(matches: &clap::ArgMatches<'_>, config_file_path: 
     };
 
     {
-        let mut rand_seed_buf = [0_u8; 64];
-        i2p_stream.read(&mut rand_seed_buf).unwrap();
-        use ring::digest::{Context, SHA256};
-        let mut context = Context::new(&SHA256);
-        context.update(&rand_seed_buf);
-        let digest = context.finish();
-        i2p_stream.write(digest.as_ref()).unwrap();
+        let mut buf = [0_u8; 1024];
+        match i2p_stream.read(&mut buf) {
+            Ok(n) => {
+                println!("read {} bytes", n);
+                let mut buf_int = [0_u8; 8];
+                buf_int.copy_from_slice(&buf[0..8]);
+                let vdf_seed =  rug::Integer::from(
+                    u64::from_le_bytes(buf_int)
+                );
+                println!("rand_seed {}", vdf_seed);
+                const NUM_STEPS: u64 = 1024 * 512;
+                let witness = vdf::vdf_mimc::eval(&vdf_seed, NUM_STEPS);
+                println!("witness {}", witness);
+                let witness_str = witness.to_string();
+                match i2p_stream.write(witness_str.as_bytes()) {
+                    Ok(n) => println!("wrote {} bytes", n),
+                    Err(err) => return Err(anyhow!("failed to write data {:#?}", err)),
+                };
+            }
+            Err(err) => return Err(anyhow!("failed to read data {:#?}", err)),
+        }
     }
     i2p_stream.inner.set_nonblocking(true).unwrap();
     let mut i2p_conn = tokio::net::TcpStream::from_std(i2p_stream.inner.sam.conn)?;

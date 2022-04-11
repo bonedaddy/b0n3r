@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "3c0892f3c94275afc9833676493c26d0878ad708"}
+i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "31518759a89b61ea465905845b3d640d6eaf4d87"}
 env_logger = "0.5"
 log = "0.4.6"
 anyhow = "1"
@@ -24,3 +24,4 @@ rug = "1.15"
 data-encoding = "2.3.2"
 ring = "0.16.20"
 futures = { version = "0.3.0", features = ["thread-pool"]}
+bytes = "1.1.0"

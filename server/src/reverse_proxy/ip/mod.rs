@@ -1,5 +1,6 @@
 //! provides a reverse proxy server that forwards connections
 //! received on an i2p stream to an ip-based service.
+use bytes::{BytesMut, BufMut};
 
 use std::io::{Write, Read};
 use std::time::Duration;
@@ -40,7 +41,7 @@ impl Server {
     }
     /// tunnel_name specifies the name of the server tunnel and
     /// it's corresponding lease set to use
-   pub async fn start(
+   pub fn start(
         self: &Arc<Self>, 
         tunnel_name: String,
         destination_name: String,
@@ -68,7 +69,7 @@ impl Server {
         };
 
         let local_addr = i2p_listener.local_addr().unwrap();
-        
+
         info!("listening for connections on {}",  I2pAddr::from_b64(&local_addr.dest().string()).unwrap());
         loop {
             match i2p_listener.accept() {
@@ -101,17 +102,14 @@ impl Server {
                         // but it serves as a temporary method of stopping  people 
                         // from randomly opening tunnels
                         {
-                            let rand_seed = rand_value();
-                            let want_rand_seed_hash = {
-                                use ring::digest::{Context, SHA256};
-                                let mut context = Context::new(&SHA256);
-                                context.update(rand_seed.as_bytes());
-                                let digest = context.finish();
-                                digest.as_ref().to_vec()
-                            };
+
+                            let rand_seed = rug::Integer::from(rand_int());
+
+                            println!("rand_seed {}", rand_seed);
 
                             // write the random seed
-                            match incoming_conn.write(rand_seed.as_bytes()) {
+                            //match incoming_conn.write(&rand_seed.to_f64().to_le_bytes()[..]) {
+                                match incoming_conn.write(&rand_seed.to_u64().unwrap().to_le_bytes()[..]) {
                                 Ok(n) => info!("wrote {} bytes of random_seed", n),
                                 Err(err) => {
                                     error!("failed to write random_seed {:#?}", err);
@@ -119,20 +117,45 @@ impl Server {
                                     return;
                                 }
                             };
-                            // read the hashed random seed
-                            let mut rand_seed_hash = [0_u8; 32];
-                            match incoming_conn.read(&mut rand_seed_hash) {
-                                Ok(n) => info!("read {} bytes of hashed_random_seed", n),
+                            let mut buf = [0_u8; 1024];
+                            let witness = match incoming_conn.read(&mut buf) {
+                                Ok(n) => {
+                                    info!("read {} bytes of hashed_random_seed", n);
+                                    let parsed = match String::from_utf8(buf[0..n].to_vec()) {
+                                        Ok(parsed) => parsed,
+                                        Err(err) => {
+                                            error!("failed to parse vdf {:#?}", err);
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                    };
+                                    match rug::Integer::from_str(&parsed) {
+                                        Ok(parsed) => parsed,
+                                        Err(err) => {
+                                            error!("failed to parse vdf {:#?}", err);
+                                            let _ = incoming_conn.shutdown(Shutdown::Both);
+                                            return;
+                                        }
+                                    }
+                                },
                                 Err(err) => {
                                     error!("failed to write random_seed {:#?}", err);
                                     let _ = incoming_conn.shutdown(Shutdown::Both);
                                     return;
                                 }
                             };
-
-                            // ensure it matches the expected value
-                            if rand_seed_hash.to_vec().ne(&want_rand_seed_hash) {
-                                error!("mismatched hashes. want {:?}, got {:?}", want_rand_seed_hash, rand_seed_hash);
+                            println!("witness {}", witness);
+                            const NUM_STEPS: u64 = 1024 * 512;
+                            if !vdf::vdf_mimc::verify(&rand_seed, NUM_STEPS, &witness) {
+                                error!("failed to verify vdf");
+                                let _ = incoming_conn.shutdown(Shutdown::Both);
+                                return;
+                            }
+                        }
+                        match configure_incoming_stream(&incoming_conn, non_blocking, read_timeout, write_timeout) {
+                            Ok(_) => (),
+                            Err(err) => {
+                                error!("failed to configure incoming connection {:#?}", err);
                                 let _ = incoming_conn.shutdown(Shutdown::Both);
                                 return;
                             }
@@ -145,7 +168,6 @@ impl Server {
                                 return;
                             }
                         };
-
                         let transfer = transfer(incoming_conn, forward_ip.clone()).map(|r| {
                             if let Err(e) = r {
                                 println!("Failed to transfer; error={}", e);
@@ -164,6 +186,11 @@ impl Server {
     }
 
     
+}
+
+
+fn rand_int() -> u64 {
+    rand::thread_rng().gen_range(u64::MIN..u64::MAX)
 }
 
 fn rand_value() -> String {

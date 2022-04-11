@@ -40,14 +40,25 @@ pub async fn start_tcp_echo_server(matches: &clap::ArgMatches<'_>, config_file_p
 pub async fn start_reverse_proxy(matches: &clap::ArgMatches<'_>, config_file_path: &str) -> Result<()> {
     let config = config::Configuration::load(config_file_path)?;
     let server = server::reverse_proxy::ip::Server::new(config)?;
-    server.start(
-        matches.value_of("tunnel-name").unwrap().to_string(),
-        matches.value_of("destination-name").unwrap().to_string(),
-        matches.value_of("forward-ip").unwrap().to_string(),
-        None,
-        None,
-        matches.is_present("nonblocking")
-    ).await?;
+    let tunnel_name = matches.value_of("tunnel-name").unwrap().to_string();
+    let destination_name = matches.value_of("destination-name").unwrap().to_string();
+    let forward_ip = matches.value_of("forward-ip").unwrap().to_string();
+    let non_blocking = matches.is_present("nonblocking");
+    tokio::task::spawn_blocking(move || {
+        match server.start(
+            tunnel_name,
+            destination_name,
+            forward_ip,
+            None,
+            None,
+            non_blocking,
+        ) {
+            Ok(_) => (),
+            Err(err) => {
+                println!("reverse proxy encountered error {:#?}", err)
+            }
+        }
+    }).await?;
     Ok(())
 }
 
