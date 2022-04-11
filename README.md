@@ -10,6 +10,10 @@ Erecting I2P tunnels for anonymous microservice development, with fully decentra
   * TCP - done
   * UDP - todo
 
+# vdf
+
+The vdf source code was [copy and pasted from eupn/vdf-rs](https://github.com/eupn/vdf-rs)
+
 
 # notes
 
