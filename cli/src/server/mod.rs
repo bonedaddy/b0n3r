@@ -1,7 +1,10 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use config::Configuration;
 use server::echo::Server;
-pub async fn start_echo_server(matches: &clap::ArgMatches<'_>, config_file_path: &str) -> Result<()> {
+pub async fn start_echo_server(
+    matches: &clap::ArgMatches<'_>,
+    config_file_path: &str,
+) -> Result<()> {
     let config = config::Configuration::load(config_file_path)?;
     let server = Server::new(config)?;
     let tunnel_name = matches.value_of("tunnel-name").unwrap();
@@ -10,8 +13,10 @@ pub async fn start_echo_server(matches: &clap::ArgMatches<'_>, config_file_path:
     Ok(())
 }
 
-
-pub async fn start_tcp_echo_server(matches: &clap::ArgMatches<'_>, config_file_path: &str) -> Result<()> {
+pub async fn start_tcp_echo_server(
+    matches: &clap::ArgMatches<'_>,
+    config_file_path: &str,
+) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(matches.value_of("listen-ip").unwrap()).await?;
     println!("listening on {}", listener.local_addr().unwrap());
     loop {
@@ -29,7 +34,7 @@ pub async fn start_tcp_echo_server(matches: &clap::ArgMatches<'_>, config_file_p
                     };
                     println!("copied {} bytes", copied);
                 });
-            },
+            }
             Err(err) => {
                 println!("failed to accept connection {:#?}", err);
             }
@@ -37,7 +42,10 @@ pub async fn start_tcp_echo_server(matches: &clap::ArgMatches<'_>, config_file_p
     }
 }
 
-pub async fn start_reverse_proxy(matches: &clap::ArgMatches<'_>, config_file_path: &str) -> Result<()> {
+pub async fn start_reverse_proxy(
+    matches: &clap::ArgMatches<'_>,
+    config_file_path: &str,
+) -> Result<()> {
     let config = config::Configuration::load(config_file_path)?;
     let server = server::reverse_proxy::ip::Server::new(config)?;
     let tunnel_name = matches.value_of("tunnel-name").unwrap().to_string();
@@ -58,8 +66,7 @@ pub async fn start_reverse_proxy(matches: &clap::ArgMatches<'_>, config_file_pat
                 println!("reverse proxy encountered error {:#?}", err)
             }
         }
-    }).await?;
+    })
+    .await?;
     Ok(())
 }
-
-

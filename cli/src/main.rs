@@ -1,3 +1,7 @@
+use tikv_jemallocator::Jemalloc;
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 use anyhow::{anyhow, Result};
 use clap::{App, Arg, ArgMatches, SubCommand};
 use i2p::net::{I2pAddr, I2pListener, I2pStream};
@@ -9,9 +13,9 @@ use std::sync::Arc;
 use std::{thread, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-mod utils;
-mod server;
 mod client;
+mod server;
+mod utils;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,30 +28,30 @@ async fn main() -> Result<()> {
     .takes_value(true)
     .required(true);
     let tunnel_name_flag = Arg::with_name("tunnel-name")
-    .long("tunnel-name")
-    .help("the name of the tunnel to use within a server, etc..")
-    .takes_value(true)
-    .required(true);
+        .long("tunnel-name")
+        .help("the name of the tunnel to use within a server, etc..")
+        .takes_value(true)
+        .required(true);
     let destination_flag = Arg::with_name("destination")
-    .long("destination")
-    .help("the destination (i2p address) to connection to, usually by a client process")
-    .takes_value(true)
-    .required(true);
+        .long("destination")
+        .help("the destination (i2p address) to connection to, usually by a client process")
+        .takes_value(true)
+        .required(true);
     let forward_ip_flag = Arg::with_name("forward-ip")
-    .long("forward-ip")
-    .help("the ip address to forward connections to")
-    .takes_value(true)
-    .required(true);
+        .long("forward-ip")
+        .help("the ip address to forward connections to")
+        .takes_value(true)
+        .required(true);
     let listen_ip_flag = Arg::with_name("listen-ip")
-    .long("listen-ip")
-    .help("the ip address to listening for connections on")
-    .takes_value(true)
-    .required(true);
+        .long("listen-ip")
+        .help("the ip address to listening for connections on")
+        .takes_value(true)
+        .required(true);
     let non_blocking_flag = Arg::with_name("nonblocking")
-    .long("nonblocking")
-    .help("enable socket nonblocking mode")
-    .takes_value(false)
-    .required(false);
+        .long("nonblocking")
+        .help("enable socket nonblocking mode")
+        .takes_value(false)
+        .required(false);
     let matches = App::new("boner-cli")
         .about("another innapropriately named but maybe useful piece of software written by me")
         .long_about("ideal application outcome is a self configuring tcp proxy that uses i2p")
@@ -71,29 +75,27 @@ async fn main() -> Result<()> {
                     .about("generate a destination public/private keypair within the local router")
                     .arg(destination_name_flag.clone())]),
             SubCommand::with_name("server")
-            .about("server management commands")
-            .subcommands(vec![
-                SubCommand::with_name("echo")
-                .about("starts the basic echo server")
-                .arg(destination_name_flag.clone())
-                .arg(tunnel_name_flag.clone()),
-                SubCommand::with_name("tcp-echo")
-                .about("starts the basic tcp echo server")
-                .arg(listen_ip_flag.clone()),
-                SubCommand::with_name("reverse-proxy")
-                .about("starts the reverse proxy server")
-                .arg(destination_name_flag.clone())
-                .arg(tunnel_name_flag.clone())
-                .arg(forward_ip_flag.clone())
-                .arg(non_blocking_flag.clone())
-            ]),
+                .about("server management commands")
+                .subcommands(vec![
+                    SubCommand::with_name("echo")
+                        .about("starts the basic echo server")
+                        .arg(destination_name_flag.clone())
+                        .arg(tunnel_name_flag.clone()),
+                    SubCommand::with_name("tcp-echo")
+                        .about("starts the basic tcp echo server")
+                        .arg(listen_ip_flag.clone()),
+                    SubCommand::with_name("reverse-proxy")
+                        .about("starts the reverse proxy server")
+                        .arg(destination_name_flag.clone())
+                        .arg(tunnel_name_flag.clone())
+                        .arg(forward_ip_flag.clone())
+                        .arg(non_blocking_flag.clone()),
+                ]),
             SubCommand::with_name("client")
-            .about("client management commands")
-            .subcommands(vec![
-                SubCommand::with_name("echo")
-                .about("starts the basic echo client test")
-                .arg(destination_flag.clone())
-            ])
+                .about("client management commands")
+                .subcommands(vec![SubCommand::with_name("echo")
+                    .about("starts the basic echo client test")
+                    .arg(destination_flag.clone())]),
         ])
         .get_matches();
 
@@ -128,14 +130,14 @@ async fn process_matches(matches: &ArgMatches<'_>, config_file_path: &str) -> Re
             ("reverse-proxy", Some(reverse_proxy)) => {
                 server::start_reverse_proxy(reverse_proxy, config_file_path).await
             }
-            _ => return Err(anyhow!(invalid_subcommand("server")))
-        }
+            _ => return Err(anyhow!(invalid_subcommand("server"))),
+        },
         ("client", Some(client)) => match client.subcommand() {
             ("echo", Some(echo_client)) => {
                 client::echo_client_test(echo_client, config_file_path).await
             }
-            _ => return Err(anyhow!(invalid_subcommand("client")))
-        }
+            _ => return Err(anyhow!(invalid_subcommand("client"))),
+        },
         _ => {
             println!("{}", matches.usage());
             println!("    run --help for more information");

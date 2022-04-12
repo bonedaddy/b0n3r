@@ -1,48 +1,53 @@
 //! provides a reverse proxy server that forwards connections
 //! received on an i2p stream to an ip-based service.
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
+use rug::Integer;
 
-use std::io::{Write, Read};
-use std::time::Duration;
-use std::{sync::Arc, str::FromStr, borrow::BorrowMut, net::{TcpListener, Shutdown}};
-use config::Configuration;
-use anyhow::{Result, anyhow};
-use i2p::net::I2pStream;
-use i2p::{SamConnection, Session, sam::SessionStyle, net::{I2pListener, I2pAddr}};
-use log::{info, warn ,error};
+use anyhow::{anyhow, Result};
 use axum::{
     extract::Extension,
     http::{uri::Uri, Request, Response},
     routing::get,
     Router,
 };
-use hyper::{client::HttpConnector, Body, server::conn::AddrIncoming};
+use config::Configuration;
+use hyper::{client::HttpConnector, server::conn::AddrIncoming, Body};
+use i2p::net::I2pStream;
+use i2p::{
+    net::{I2pAddr, I2pListener},
+    sam::SessionStyle,
+    SamConnection, Session,
+};
+use log::{error, info, warn};
 use rand::Rng;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use tokio::net::TcpStream;
+use std::io::{Read, Write};
+use std::time::Duration;
+use std::{
+    borrow::BorrowMut,
+    net::{Shutdown, TcpListener},
+    str::FromStr,
+    sync::Arc,
+};
 use std::{convert::TryFrom, net::SocketAddr};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use futures::FutureExt;
 type Client = hyper::client::Client<HttpConnector, Body>;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-
-
 pub struct Server {
     cfg: Configuration,
 }
 
-
 impl Server {
-    pub fn new(
-        cfg: Configuration,
-    ) -> Result<Arc<Server>> {
-        Ok(Arc::new(Server{cfg}))
+    pub fn new(cfg: Configuration) -> Result<Arc<Server>> {
+        Ok(Arc::new(Server { cfg }))
     }
     /// tunnel_name specifies the name of the server tunnel and
     /// it's corresponding lease set to use
-   pub fn start(
-        self: &Arc<Self>, 
+    pub fn start(
+        self: &Arc<Self>,
         tunnel_name: String,
         destination_name: String,
         // ip address to forward requests too
@@ -54,23 +59,31 @@ impl Server {
         let tunnel = self.cfg.server.tunnel_by_name(&tunnel_name)?;
         let destination = self.cfg.destination_by_name(&destination_name)?;
         let sam_session = match Session::create(
-            self.cfg.sam.endpoint.clone(), 
+            self.cfg.sam.endpoint.clone(),
             &destination.secret_key.clone(),
-            &nickname(), 
+            &nickname(),
             SessionStyle::Stream,
             tunnel.options(),
         ) {
             Ok(sam_session) => sam_session,
             Err(err) => return Err(anyhow!("failed to create sam session {:#?}", err)),
         };
-        let i2p_listener = match I2pListener::bind_with_session(&sam_session) {
+        let mut i2p_listener = match I2pListener::bind_with_session(&sam_session) {
             Ok(i2p_listener) => i2p_listener,
-            Err(err) => return Err(anyhow!("failed to bind i2p listener to sam session {:#?}", err))
+            Err(err) => {
+                return Err(anyhow!(
+                    "failed to bind i2p listener to sam session {:#?}",
+                    err
+                ))
+            }
         };
 
         let local_addr = i2p_listener.local_addr().unwrap();
 
-        info!("listening for connections on {}",  I2pAddr::from_b64(&local_addr.dest().string()).unwrap());
+        info!(
+            "listening for connections on {}",
+            I2pAddr::from_b64(&local_addr.dest().string()).unwrap()
+        );
         loop {
             match i2p_listener.accept() {
                 Ok(incoming) => {
@@ -79,12 +92,13 @@ impl Server {
                     tokio::task::spawn(async move {
                         let mut incoming_conn = incoming.0;
                         let incoming_addr = incoming.1;
-   
+
                         info!("accepted connection from {}", incoming_addr);
 
                         info!("connecting to {}", forward_ip);
 
-                        // drain the first byte 
+                        // drain the first byte
+                        // for some reason 1 byte is always sent, not sure why
                         {
                             let mut buf = [0_u8; 1];
                             match incoming_conn.read_exact(&mut buf) {
@@ -96,20 +110,30 @@ impl Server {
                                 }
                             }
                         }
-                        // until vdfs are implemented, generate a random value
-                        // that must be hashed by the incoming connection
-                        // this isn't fail-safe, and wont prevent ddos
-                        // but it serves as a temporary method of stopping  people 
-                        // from randomly opening tunnels
+                        // to facilate decentralized ddos mitigation, we use a vdf based captcha format
+                        // which takes approximately 13s to generate, and 0.2s to verify
                         {
-
                             let rand_seed = rug::Integer::from(rand_int());
 
-                            println!("rand_seed {}", rand_seed);
+                            let captcha = VDFCaptcha {
+                                rand_seed: rand_seed.to_string(),
+                                steps: 1024 * 1024,
+                            };
+
+                            println!(
+                                "rand_seed {}, rand_seed_str {}",
+                                rand_seed, captcha.rand_seed
+                            );
 
                             // write the random seed
-                            //match incoming_conn.write(&rand_seed.to_f64().to_le_bytes()[..]) {
-                                match incoming_conn.write(&rand_seed.to_u64().unwrap().to_le_bytes()[..]) {
+                            match incoming_conn.write(&match captcha.serialize() {
+                                Ok(captcha_bytes) => captcha_bytes,
+                                Err(err) => {
+                                    error!("failed to serialize vdf captcha {:#?}", err);
+                                    let _ = incoming_conn.shutdown(Shutdown::Both);
+                                    return;
+                                }
+                            }[..]) {
                                 Ok(n) => info!("wrote {} bytes of random_seed", n),
                                 Err(err) => {
                                     error!("failed to write random_seed {:#?}", err);
@@ -117,42 +141,32 @@ impl Server {
                                     return;
                                 }
                             };
-                            let mut buf = [0_u8; 1024];
-                            let witness = match incoming_conn.read(&mut buf) {
+                            let mut buf = [0_u8; 128];
+                            match incoming_conn.read(&mut buf) {
                                 Ok(n) => {
                                     info!("read {} bytes of hashed_random_seed", n);
-                                    let parsed = match String::from_utf8(buf[0..n].to_vec()) {
-                                        Ok(parsed) => parsed,
+                                    match captcha.verify(&buf[0..n])  {
+                                        Ok(_) => info!("vdf verified"),
                                         Err(err) => {
-                                            error!("failed to parse vdf {:#?}", err);
-                                            let _ = incoming_conn.shutdown(Shutdown::Both);
-                                            return;
-                                        }
-                                    };
-                                    match rug::Integer::from_str(&parsed) {
-                                        Ok(parsed) => parsed,
-                                        Err(err) => {
-                                            error!("failed to parse vdf {:#?}", err);
+                                            error!("failed to verify vdf {:#?}", err);
                                             let _ = incoming_conn.shutdown(Shutdown::Both);
                                             return;
                                         }
                                     }
-                                },
+                                }
                                 Err(err) => {
                                     error!("failed to write random_seed {:#?}", err);
                                     let _ = incoming_conn.shutdown(Shutdown::Both);
                                     return;
                                 }
-                            };
-                            println!("witness {}", witness);
-                            const NUM_STEPS: u64 = 1024 * 512;
-                            if !vdf::vdf_mimc::verify(&rand_seed, NUM_STEPS, &witness) {
-                                error!("failed to verify vdf");
-                                let _ = incoming_conn.shutdown(Shutdown::Both);
-                                return;
                             }
                         }
-                        match configure_incoming_stream(&incoming_conn, non_blocking, read_timeout, write_timeout) {
+                        match configure_incoming_stream(
+                            &incoming_conn,
+                            non_blocking,
+                            read_timeout,
+                            write_timeout,
+                        ) {
                             Ok(_) => (),
                             Err(err) => {
                                 error!("failed to configure incoming connection {:#?}", err);
@@ -161,47 +175,59 @@ impl Server {
                             }
                         }
                         incoming_conn.set_nonblocking(true).unwrap();
-                        let incoming_conn = match tokio::net::TcpStream::from_std(incoming_conn.inner.sam.conn) {
-                            Ok(incoming_conn) => incoming_conn,
-                            Err(err) => {
-                                error!("failed to configure incoming connection for {}: {:#?}", incoming_addr, err);
-                                return;
-                            }
-                        };
+                        let incoming_conn =
+                            match tokio::net::TcpStream::from_std(incoming_conn.inner.sam.conn) {
+                                Ok(incoming_conn) => incoming_conn,
+                                Err(err) => {
+                                    error!(
+                                        "failed to configure incoming connection for {}: {:#?}",
+                                        incoming_addr, err
+                                    );
+                                    return;
+                                }
+                            };
                         let transfer = transfer(incoming_conn, forward_ip.clone()).map(|r| {
                             if let Err(e) = r {
                                 println!("Failed to transfer; error={}", e);
                             }
                         });
-                        tokio::spawn(async move {
-                            transfer.await
+                        tokio::spawn(async move { 
+                            info!("starting background workloop");
+                            transfer.await;
+                            info!("background workloop ended");
                         });
                     });
                 }
                 Err(err) => {
                     error!("failed to accept incoming connection {:#?}", err);
+                    i2p_listener = match I2pListener::bind_with_session(&sam_session) {
+                        Ok(i2p_listener) => i2p_listener,
+                        Err(err) => {
+                            return Err(anyhow!(
+                                "failed to bind i2p listener to sam session {:#?}",
+                                err
+                            ))
+                        }
+                    }
                 }
             }
         }
     }
-
-    
 }
-
 
 fn rand_int() -> u64 {
     rand::thread_rng().gen_range(u64::MIN..u64::MAX)
 }
 
 fn rand_value() -> String {
-    use rand::distributions::DistString;
     use rand::distributions::Alphanumeric;
+    use rand::distributions::DistString;
     Alphanumeric.sample_string(&mut rand::thread_rng(), 64)
 }
 
 fn nickname() -> String {
-    use rand::distributions::DistString;
     use rand::distributions::Alphanumeric;
+    use rand::distributions::DistString;
     Alphanumeric.sample_string(&mut rand::thread_rng(), 16)
 }
 
@@ -214,14 +240,20 @@ fn configure_incoming_stream(
     match incoming_conn.set_nonblocking(nonblocking) {
         Ok(_) => (),
         Err(err) => {
-            return Err(anyhow!("failed to set incoming connection to non blocking mode {:#?}", err));
+            return Err(anyhow!(
+                "failed to set incoming connection to non blocking mode {:#?}",
+                err
+            ));
         }
     }
     if read_timeout.is_some() {
         match incoming_conn.set_read_timeout(read_timeout) {
             Ok(_) => (),
             Err(err) => {
-                return Err(anyhow!("failed to set incoming connection read timeout {:#?}", err));
+                return Err(anyhow!(
+                    "failed to set incoming connection read timeout {:#?}",
+                    err
+                ));
             }
         }
     }
@@ -229,7 +261,10 @@ fn configure_incoming_stream(
         match incoming_conn.set_write_timeout(write_timeout) {
             Ok(_) => (),
             Err(err) => {
-                return Err(anyhow!("failed to set incoming connection write timeout {:#?}", err));
+                return Err(anyhow!(
+                    "failed to set incoming connection write timeout {:#?}",
+                    err
+                ));
             }
         }
     }
@@ -237,7 +272,10 @@ fn configure_incoming_stream(
     Ok(())
 }
 
-async fn transfer(mut inbound: TcpStream, proxy_addr: String) -> Result<(), Box<dyn std::error::Error>> {
+async fn transfer(
+    mut inbound: TcpStream,
+    proxy_addr: String,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut outbound = TcpStream::connect(proxy_addr).await?;
 
     let (mut ri, mut wi) = inbound.split();
@@ -256,4 +294,45 @@ async fn transfer(mut inbound: TcpStream, proxy_addr: String) -> Result<(), Box<
     tokio::try_join!(client_to_server, server_to_client)?;
 
     Ok(())
+}
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VDFCaptcha {
+    pub rand_seed: String,
+    pub steps: u64,
+}
+
+impl VDFCaptcha {
+    pub fn deserialize(data: &[u8]) -> Result<VDFCaptcha> {
+        Ok(bincode::deserialize(data)?)
+    }
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
+    }
+    pub fn rand_seed(&self) -> Result<Integer> {
+        Ok(Integer::from_str(&self.rand_seed)?)
+    }
+    pub fn eval(&self) -> Result<Integer> {
+        let start = std::time::SystemTime::now();
+        let witness = vdf::vdf_mimc::eval(&self.rand_seed()?, self.steps);
+        let duration = start.elapsed()?;
+        info!("vdf evaluated in {} seconds", duration.as_secs_f64());
+        println!("vdf evaluated in {} seconds", duration.as_secs_f64());
+        Ok(witness)
+    }
+    pub fn verify(&self, witness: &[u8]) -> Result<()> {
+        let start = std::time::SystemTime::now();
+        if !vdf::vdf_mimc::verify(
+            &self.rand_seed()?,
+            self.steps,
+            &Integer::from_str(&String::from_utf8(witness.to_vec())?)?,
+        ) {
+            return Err(anyhow!("failed to verify mimc"));
+        }
+        let duration = start.elapsed()?;
+        info!("vdf verified in {} seconds", duration.as_secs_f64());
+        Ok(())
+    }
 }

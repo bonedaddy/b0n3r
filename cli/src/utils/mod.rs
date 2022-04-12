@@ -20,6 +20,7 @@ pub fn gen_destination(matches: &clap::ArgMatches, config_file_path: &str) -> Re
         public_key: pubkey.clone(),
         secret_key: seckey.clone(),
         name: destination_name.to_string(),
+        sam: None,
     });
     conf.save(config_file_path)?;
     info!("public key {}", pubkey);

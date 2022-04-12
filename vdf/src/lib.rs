@@ -21,7 +21,8 @@ pub mod vdf_mod_sqrt {
             // Perform XOR of the result as a basic secure permutation
             // against possible modular square root short circuits
             result ^= 1;
-            while result >= *modulus || result == 0 { // XOR in such a way that result won't exceed modulus
+            while result >= *modulus || result == 0 {
+                // XOR in such a way that result won't exceed modulus
                 result ^= 1;
             }
         }
@@ -37,8 +38,7 @@ pub mod vdf_mod_sqrt {
         let modulus = modulus.clone();
 
         // Take seed by moduli p
-        let mut x = Integer::from(seed.clone()
-            .div_rem_floor(modulus.clone()).1);
+        let mut x = Integer::from(seed.clone().div_rem_floor(modulus.clone()).1);
 
         // Exponent for square root calculation
         let exponent = (modulus.clone() + 1) / 4;
@@ -48,7 +48,8 @@ pub mod vdf_mod_sqrt {
             // Perform XOR of the result as a basic secure permutation
             // against possible modular square root short circuits
             x ^= 1;
-            while x >= modulus || x == 0 { // XOR in such a way that result won't exceed modulus
+            while x >= modulus || x == 0 {
+                // XOR in such a way that result won't exceed modulus
                 x ^= 1;
             }
 
@@ -68,10 +69,12 @@ pub mod vdf_mimc {
     use rug::Integer;
 
     /// Modulus of prime field 2^256 - 2^32 * 351 + 1
-    pub const MODULUS: &str = "115792089237316195423570985008687907853269984665640564039457584006405596119041";
+    pub const MODULUS: &str =
+        "115792089237316195423570985008687907853269984665640564039457584006405596119041";
 
     /// An exponent to perform inverse of x^3 on prime field based on Fermat's Little Theorem
-    pub const L_FERMAT_EXPONENT: &str = "77194726158210796949047323339125271902179989777093709359638389337603730746027";
+    pub const L_FERMAT_EXPONENT: &str =
+        "77194726158210796949047323339125271902179989777093709359638389337603730746027";
 
     /// Calculates set of round constants to perform MiMC-calculation on.
     fn calculate_round_constants() -> [u64; 64] {
@@ -91,8 +94,9 @@ pub mod vdf_mimc {
         let mut result = input.clone();
         let three = Integer::from(3);
         for i in 1..num_steps {
-            result = (result.pow_mod(&three, &modulus).unwrap() +
-                            Integer::from(round_constants[i as usize % round_constants.len()])) % &modulus;
+            result = (result.pow_mod(&three, &modulus).unwrap()
+                + Integer::from(round_constants[i as usize % round_constants.len()]))
+                % &modulus;
         }
 
         result
@@ -111,7 +115,8 @@ pub mod vdf_mimc {
         for i in (1..num_steps).rev() {
             let round_constant = Integer::from(round_constants[i as usize % round_constants.len()]);
             result = Integer::from(&result - &round_constant)
-                .pow_mod(&l_fermat_exp, &modulus).unwrap();
+                .pow_mod(&l_fermat_exp, &modulus)
+                .unwrap();
         }
 
         result
@@ -158,7 +163,6 @@ pub mod vdf_mimc {
                 panic!("should be valid");
             }
             println!("verify duration {}", verify_duration.as_secs());
-
         }
     }
 }

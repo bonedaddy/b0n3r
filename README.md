@@ -20,3 +20,9 @@ The vdf source code was [copy and pasted from eupn/vdf-rs](https://github.com/eu
 * [i2cp specs](https://geti2p.net/spec/i2cp)
 * [i2cp protocol options](https://geti2p.net/en/docs/protocol/i2cp)
 * [tokio proxy example](https://github.com/tokio-rs/tokio/blob/master/examples/proxy.rs)
+
+# todos
+
+* bridge the i2p listener with shadowsocks https://github.com/shadowsocks/shadowsocks-rust/blob/master/crates/shadowsocks/src/net/tcp.rs
+* implement https://github.com/kpcyrd/sn0int
+* implement https://github.com/dizda/fast-socks5

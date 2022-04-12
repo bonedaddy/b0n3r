@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "31518759a89b61ea465905845b3d640d6eaf4d87"}
+i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "a22c0b75e1a3782e366462951bde259cb8770888"}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1.0"
 serde_yaml = "0.8"

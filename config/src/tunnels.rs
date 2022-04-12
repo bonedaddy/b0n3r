@@ -1,5 +1,7 @@
-use i2p::sam_options::{SAMOptions, I2CPOptions, I2CPRouterOptions, I2CPTunnelInboundOptions, I2CPTunnelOutboundOptions};
-use serde::{Serialize, Deserialize};
+use i2p::sam_options::{
+    I2CPOptions, I2CPRouterOptions, I2CPTunnelInboundOptions, I2CPTunnelOutboundOptions, SAMOptions,
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Tunnel {

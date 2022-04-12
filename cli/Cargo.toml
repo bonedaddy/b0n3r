@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "31518759a89b61ea465905845b3d640d6eaf4d87"}
+i2p = {git = "https://github.com/bonedaddy/i2p-rs.git", rev = "a22c0b75e1a3782e366462951bde259cb8770888"}
 env_logger = "0.5"
 log = "0.4.6"
 anyhow = "1"
@@ -19,3 +19,4 @@ ring = "0.16.20"
 rug = "1.15"
 vdf = {path = "../vdf"}
 bytes = "1.1.0"
+tikv-jemallocator = "0.4.3"

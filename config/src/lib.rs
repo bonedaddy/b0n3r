@@ -1,8 +1,8 @@
 pub mod tunnels;
-use std::fs::File;
 use anyhow::{anyhow, Result};
 use i2p::sam::SamConnection;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use tunnels::Tunnel;
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Configuration {
@@ -40,6 +40,7 @@ pub struct Destination {
     pub secret_key: String,
     /// is not set to the i2p router, exists only in the config file
     pub name: String,
+    pub sam: Option<i2p::sam_options::SAMOptions>,
 }
 
 /// configuration for the SAM bridge
@@ -47,7 +48,6 @@ pub struct Destination {
 pub struct SAM {
     pub endpoint: String,
 }
-
 
 impl Configuration {
     pub fn new() -> Self {
@@ -81,7 +81,9 @@ impl Configuration {
 impl Server {
     pub fn tunnel_by_name(&self, name: &str) -> Result<Tunnel> {
         for tunnel in self.tunnels.iter() {
-            if tunnel.name.eq(name) { return Ok(tunnel.clone()) }
+            if tunnel.name.eq(name) {
+                return Ok(tunnel.clone());
+            }
         }
         Err(anyhow!("failed to find tunnel with name {}", name))
     }
